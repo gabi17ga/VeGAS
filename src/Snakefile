@@ -1,0 +1,277 @@
+import os
+import re
+import shutil
+import pandas as pd
+import warnings
+
+from glob import glob
+from tqdm import tqdm
+
+# warnings.filterwarnings("ignore")
+
+# Load configuration variables
+install_path = config.get("install_path", None)
+work_directory = config.get("output_dir", None)
+host_genomes_folder = config.get("host_genome", None)
+reference_genomes_folder = config.get("reference_genome", None)
+ccores = config.get("ccores", 1)
+
+# Print configuration variables
+# print(f"Install Path: {install_path}")
+# print(f"Work Directory: {work_directory}")
+# print(f"Host Genomes Folder: {host_genomes_folder}")
+# print(f"Reference Genomes Folder: {reference_genomes_folder}")
+# print(f"Number of Cores: {ccores}")
+
+# Ensure the raw_data directory exists
+os.makedirs("raw_data", exist_ok=True)
+
+install_path = f"{install_path}"
+
+# ================= Utility Functions =================
+
+def list_fastq_files(path):
+    """Returns a list of all .fastq.gz files in the specified path."""
+    return [f for f in glob(os.path.join(path, "*.fastq.gz"))]
+
+def get_core_sample_name(filename):
+    """Extracts the core sample name by removing _R1 or _R2 and other suffixes."""
+    return os.path.basename(filename).replace("_R1", "").replace("_R2", "").replace(".fastq.gz", "")
+
+def build_fastq_pairs(fastq_files):
+    """Pairs R1 and R2 files based on sample names."""
+    pairs = {}
+    for file in fastq_files:
+        sample = get_core_sample_name(file)
+        if sample:
+            if sample not in pairs:
+                pairs[sample] = {}
+            if "_R1" in file or "R1" in file:
+                pairs[sample]["R1"] = file
+            elif "_R2" in file or "R2" in file:
+                pairs[sample]["R2"] = file
+    # Filter out incomplete pairs
+    return {s: p for s, p in pairs.items() if "R1" in p and "R2" in p}
+
+# ================= Data Preparation =================
+
+fastq_files = list_fastq_files("raw_data")
+file_names = [os.path.basename(f).replace(".fastq.gz", "") for f in fastq_files]
+sample_pairs = build_fastq_pairs(fastq_files)
+sample_names = list(sample_pairs.keys())
+
+host_removal_script = os.path.join(install_path, "scripts", "host_removal.py")
+assembly_script = os.path.join(install_path, "scripts", "assembly.py")
+QC_report_script = os.path.join(install_path, "scripts", "QC_report.py")
+
+# Determine the list of host and reference genome names
+host_genomes = glob(os.path.join(str(host_genomes_folder), "*.fasta"))
+host_genome_names = [os.path.splitext(os.path.basename(g))[0] for g in host_genomes]
+print(f"Host Genomes: {host_genome_names}")
+
+ref_genomes = glob(os.path.join(str(reference_genomes_folder), "*.fasta"))
+ref_genome_names = [os.path.splitext(os.path.basename(g))[0] for g in ref_genomes]
+print(f"Reference Genomes: {ref_genome_names}")
+
+# Create index directories
+os.makedirs("host_indexes", exist_ok=True)
+os.makedirs("ref_indexes", exist_ok=True)
+
+# ================= Snakemake Workflow =================
+
+rule all:
+    input:
+        # FastQC reports for raw data
+        fastqc_raw_html_R1=expand("fastqc_raw/{sample}_R1_fastqc.html", sample=sample_names),
+        fastqc_raw_html_R2=expand("fastqc_raw/{sample}_R2_fastqc.html", sample=sample_names),
+        fastqc_trimmed_html_R1=expand("fastqc_trimmed/{sample}_R1_fastqc.html", sample=sample_names),
+        fastqc_trimmed_html_R2=expand("fastqc_trimmed/{sample}_R2_fastqc.html", sample=sample_names),
+        fastqc_cleaned_html_R1=expand("fastqc_cleaned/{sample}_R1_fastqc.html", sample=sample_names),
+        fastqc_cleaned_html_R2=expand("fastqc_cleaned/{sample}_R2_fastqc.html", sample=sample_names),
+
+        # Cleaned and trimmed data
+        cleamed_R1=expand("cleaned/{sample}_R1.fastq.gz", sample=sample_names),
+        cleamed_R2=expand("cleaned/{sample}_R2.fastq.gz", sample=sample_names),
+        trimmed_R1=expand("trimmed/{sample}_R1.fastq.gz", sample=sample_names),
+        trimmed_R2=expand("trimmed/{sample}_R2.fastq.gz", sample=sample_names),
+        fastP_html=expand("fastp/{sample}_fastp.html", sample=sample_names),
+        fastP_json=expand("fastp/{sample}_fastp.json", sample=sample_names),
+
+        # Index building
+        host_indexes=expand("host_indexes/{host_genome}.{ext}", 
+                           host_genome=host_genome_names, 
+                           ext=["1.bt2"]),
+        ref_indexes=expand("ref_indexes/{ref_genome}.{ext}", 
+                          ref_genome=ref_genome_names, 
+                          ext=["1.bt2"]),
+        
+        # Assembly results
+        bam=expand("assembly/{sample}.bam", sample=sample_names),
+        sorted_bam=expand("assembly/{sample}.bam.bai", sample=sample_names),
+        fasta=expand("assembly/{sample}.fasta", sample=sample_names),
+
+        # Report
+        QC_report="QC.html"
+
+rule fastp:
+    input:
+        R1=lambda wildcards: sample_pairs[wildcards.sample]["R1"],
+        R2=lambda wildcards: sample_pairs[wildcards.sample]["R2"]
+    output:
+        R1="trimmed/{sample}_R1.fastq.gz",
+        R2="trimmed/{sample}_R2.fastq.gz",
+        html="fastp/{sample}_fastp.html",
+        json="fastp/{sample}_fastp.json"
+    conda:
+        "envs/fastp_env.yml"
+    shell:
+        "mkdir -p fastp && "
+        "fastp -i {input.R1} -I {input.R2} -o {output.R1} -O {output.R2} -h fastp/{wildcards.sample}_fastp.html -j fastp/{wildcards.sample}_fastp.json"
+
+rule fastqc_raw:
+    input:
+        R1=lambda wildcards: sample_pairs[wildcards.sample]["R1"],
+        R2=lambda wildcards: sample_pairs[wildcards.sample]["R2"]
+    output:
+        html_R1="fastqc_raw/{sample}_R1_fastqc.html",
+        html_R2="fastqc_raw/{sample}_R2_fastqc.html",
+    conda:
+        "envs/fastqc_env.yml"
+    shell:
+        """
+        fastqc {input.R1} -o fastqc_raw
+        fastqc {input.R2} -o fastqc_raw
+        """
+
+rule fastqc_trimmed:
+    input:
+        R1="trimmed/{sample}_R1.fastq.gz",
+        R2="trimmed/{sample}_R2.fastq.gz"
+    output:
+        html_R1="fastqc_trimmed/{sample}_R1_fastqc.html",
+        html_R2="fastqc_trimmed/{sample}_R2_fastqc.html",
+    conda:
+        "envs/fastqc_env.yml"
+    shell:
+        """
+        fastqc {input.R1} -o fastqc_trimmed
+        fastqc {input.R2} -o fastqc_trimmed
+        """
+
+rule fastqc_cleaned:
+    input:
+        R1="cleaned/{sample}_R1.fastq.gz",
+        R2="cleaned/{sample}_R2.fastq.gz"
+    output:
+        html_R1="fastqc_cleaned/{sample}_R1_fastqc.html",
+        html_R2="fastqc_cleaned/{sample}_R2_fastqc.html",
+    conda:
+        "envs/fastqc_env.yml"
+    shell:
+        """
+        fastqc {input.R1} -o fastqc_cleaned
+        fastqc {input.R2} -o fastqc_cleaned
+        """
+
+rule build_host_index:
+    input:
+        # Explicit path to FASTA file
+        lambda wildcards: os.path.join(host_genomes_folder, f"{wildcards.host_genome}.fasta")
+    output:
+        # Match the pattern in rule all
+        expand("host_indexes/{{host_genome}}.{ext}", ext=["1.bt2"])
+    conda:
+        "envs/bowtie2_env.yml"
+    threads:
+        ccores
+    shell:
+        "echo 'Building host index for {wildcards.host_genome}' && "
+        "bowtie2-build {input} host_indexes/{wildcards.host_genome} -p {ccores}"
+
+rule build_ref_index:
+    input:
+        lambda wildcards: os.path.join(reference_genomes_folder, f"{wildcards.ref_genome}.fasta")
+    output:
+        expand("ref_indexes/{{ref_genome}}.{ext}", ext=["1.bt2"])
+    conda:
+        "envs/bowtie2_env.yml"
+    shell:
+        "echo 'Building reference index for {wildcards.ref_genome}' && "
+        "cp {input} ref_indexes/{wildcards.ref_genome}.fasta && "
+        "bowtie2-build {input} ref_indexes/{wildcards.ref_genome} -p {ccores}"
+
+rule host_removal:
+    input:
+        R1="trimmed/{sample}_R1.fastq.gz",
+        R2="trimmed/{sample}_R2.fastq.gz",
+        index=expand("host_indexes/{host_genome}.1.bt2", host_genome=host_genome_names)
+    output:
+        R1="cleaned/{sample}_R1.fastq.gz",
+        R2="cleaned/{sample}_R2.fastq.gz",
+    conda:
+        "envs/bowtie2_env.yml"
+    threads:
+        ccores
+    shell:
+        """
+        echo 'Removing host reads for {wildcards.sample}' &&
+        python {host_removal_script} --r1 {input.R1} --r2 {input.R2} --out_r1 {output.R1} --out_r2 {output.R2} --host {input.index} --threads {ccores} --folder {work_directory}
+        """
+
+rule assembly:
+    input:
+        R1="cleaned/{sample}_R1.fastq.gz",
+        R2="cleaned/{sample}_R2.fastq.gz",
+        index=expand("ref_indexes/{ref_genome}.1.bt2", ref_genome=ref_genome_names)
+    output:
+        bam="assembly/{sample}.bam",
+        sorted_bam="assembly/{sample}.bam.bai",
+        fasta="assembly/{sample}.fasta"
+    conda:
+        "envs/bowtie2_env.yml"
+    threads:
+        ccores
+    shell:
+        """
+        echo 'Assembling {wildcards.sample}' &&
+        python {assembly_script} --r1 {input.R1} --r2 {input.R2} --references {input.index} --threads {ccores} --folder {work_directory}
+        """
+
+rule QC_report:
+    input:
+        # FastQC reports for raw data
+        fastqc_raw_html_R1=expand("fastqc_raw/{sample}_R1_fastqc.html", sample=sample_names),
+        fastqc_raw_html_R2=expand("fastqc_raw/{sample}_R2_fastqc.html", sample=sample_names),
+        fastqc_trimmed_html_R1=expand("fastqc_trimmed/{sample}_R1_fastqc.html", sample=sample_names),
+        fastqc_trimmed_html_R2=expand("fastqc_trimmed/{sample}_R2_fastqc.html", sample=sample_names),
+        fastqc_cleaned_html_R1=expand("fastqc_cleaned/{sample}_R1_fastqc.html", sample=sample_names),
+        fastqc_cleaned_html_R2=expand("fastqc_cleaned/{sample}_R2_fastqc.html", sample=sample_names),
+
+        # Cleaned and trimmed data
+        cleamed_R1=expand("cleaned/{sample}_R1.fastq.gz", sample=sample_names),
+        cleamed_R2=expand("cleaned/{sample}_R2.fastq.gz", sample=sample_names),
+        trimmed_R1=expand("trimmed/{sample}_R1.fastq.gz", sample=sample_names),
+        trimmed_R2=expand("trimmed/{sample}_R2.fastq.gz", sample=sample_names),
+
+        # Index building
+        host_indexes=expand("host_indexes/{host_genome}.{ext}", 
+                           host_genome=host_genome_names, 
+                           ext=["1.bt2"]),
+        ref_indexes=expand("ref_indexes/{ref_genome}.{ext}", 
+                          ref_genome=ref_genome_names, 
+                          ext=["1.bt2"]),
+        
+        # Assembly results
+        bam=expand("assembly/{sample}.bam", sample=sample_names),
+        sorted_bam=expand("assembly/{sample}.bam.bai", sample=sample_names),
+        fasta=expand("assembly/{sample}.fasta", sample=sample_names)
+    output:
+        QC_report="QC.html"
+    conda:
+        "envs/report_env.yml"
+    shell:
+        """
+        mkdir -p report &&
+        echo Generating report &&
+        python {QC_report_script} --folder {work_directory} --install_path {install_path}
+        """

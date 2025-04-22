@@ -1,0 +1,7 @@
+name: fastp_env
+channels:
+  - defaults
+  - bioconda
+  - conda-forge
+dependencies:
+  - fastp

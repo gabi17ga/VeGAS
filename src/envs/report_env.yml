@@ -1,0 +1,10 @@
+name: report_env
+channels:
+  - plotly
+  - defaults
+  - bioconda
+  - conda-forge
+dependencies:
+  - numpy
+  - plotly
+  - jinja2
