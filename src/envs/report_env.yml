@@ -8,3 +8,5 @@ dependencies:
   - numpy
   - plotly
   - jinja2
+  - pysam
+  - pyfaidx
