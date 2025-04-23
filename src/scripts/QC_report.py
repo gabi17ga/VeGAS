@@ -273,51 +273,6 @@ def build_distribution_plot(data_R1, data_R2, data_json, max_reads, sample_name)
         )
     ))
 
-    # Update layout
-    # fig.update_layout(
-    #     updatemenus=[
-    #         dict(
-    #             type="buttons",
-    #             buttons=[
-    #                 dict(
-    #                     label="Linear",
-    #                     method="update",
-    #                     args=[
-    #                         {"visible": [True] * len(fig.data)},
-    #                         {
-    #                             "xaxis.type": "linear",
-    #                             "yaxis.type": "linear",
-    #                             "yaxis.range": [0, max_reads],
-    #                             "annotations.visible": True
-    #                         }
-    #                     ]
-    #                 ),
-    #                 dict(
-    #                     label="Log",
-    #                     method="update",
-    #                     args=[
-    #                         {"visible": [True] * (len(fig.data)-1) + [False]},
-    #                         {
-    #                             "xaxis.type": "log",
-    #                             "yaxis.type": "log",
-    #                             "yaxis.range": [y_log_min, y_log_max],
-    #                             "annotations.visible": False
-    #                         }
-    #                     ]
-    #                 )
-    #             ],
-    #             direction="left",
-    #             pad={"r": 10, "t": 10},
-    #             showactive=True,
-    #             x=0.0,
-    #             y=1.15,
-    #             xanchor="left",
-    #             yanchor="top"
-    #         )
-    #     ]
-    # )
-
-
     # Update layout with annotation and buttons
     fig.update_layout(
         height=920,
@@ -383,7 +338,7 @@ def build_distribution_plot(data_R1, data_R2, data_json, max_reads, sample_name)
             ], start=1)],
             
             *[dict(
-                x=0.505,
+                x=0.405,
                 y=0.65 - (i*0.04),
                 xref="paper",
                 yref="paper",
@@ -667,7 +622,7 @@ def main():
     for f in raw_fastqc_zips_R1:
         # e.g. "sample1_R1_fastqc.zip" -> "sample1"
         base = os.path.basename(f)
-        sample = base.replace("_R1_fastqc.zip", "")
+        sample = basefig
         samples.append(sample)
 
     # We'll store data in a structure:
@@ -740,7 +695,6 @@ def main():
     
     rows = []
     for sample in samples:
-        print(f"Processing sample: {sample}")
         line_plot = build_distribution_plot(data_R1[sample], data_R2[sample], data_json[sample], maximum, sample)
         fastqc_plot_R1 = build_fastqc_like_plot(full_data_R1[sample])
         fastqc_plot_R2 = build_fastqc_like_plot(full_data_R2[sample])
