@@ -63,6 +63,7 @@ sample_names = list(sample_pairs.keys())
 host_removal_script = os.path.join(install_path, "scripts", "host_removal.py")
 assembly_script = os.path.join(install_path, "scripts", "assembly.py")
 QC_report_script = os.path.join(install_path, "scripts", "QC_report.py")
+assembly_report_script = os.path.join(install_path, "scripts", "assembly_report.py")
 
 # Determine the list of host and reference genome names
 host_genomes = glob(os.path.join(str(host_genomes_folder), "*.fasta"))
@@ -111,7 +112,8 @@ rule all:
         fasta=expand("assembly/{sample}.fasta", sample=sample_names),
 
         # Report
-        QC_report="QC.html"
+        QC_report="QC.html",
+        assembly_report="assembly_report.html"
 
 rule fastp:
     input:
@@ -272,6 +274,22 @@ rule QC_report:
     shell:
         """
         mkdir -p report &&
-        echo Generating report &&
+        echo Generating QC report &&
         python {QC_report_script} --folder {work_directory} --install_path {install_path}
+        """
+
+rule assembly_report:
+    input:
+        bam=expand("assembly/{sample}.bam", sample=sample_names),
+        sorted_bam=expand("assembly/{sample}.bam.bai", sample=sample_names),
+        fasta=expand("assembly/{sample}.fasta", sample=sample_names)
+    output:
+        assembly_report="assembly_report.html"
+    conda:
+        "envs/report_env.yml"
+    shell:
+        """
+        mkdir -p report &&
+        echo Generating assembly report &&
+        python {assembly_report_script} --folder {work_directory} --install_path {install_path}
         """
