@@ -110,6 +110,10 @@ def main():
         print(f"Consensus FASTA: {final_consensus_path}")
         print(f"BAM: {final_bam_path}")
         print(f"BAI: {final_bai_path}")
+        
+        # Write a text file with the best reference prefix
+        with open(os.path.join(assembly_dir, f"{sample_name}.best_ref.txt"), "w") as f:
+            f.write(f"{best_ref}\n")
 
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
