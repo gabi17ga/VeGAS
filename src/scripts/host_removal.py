@@ -1,82 +1,95 @@
 #!/usr/bin/env python3
+import argparse, glob, gzip, os, shutil, subprocess, tempfile
 
-import argparse, glob, os, shutil, subprocess
+def gzip_out(src: str, dst: str) -> None:
+    """Gzip‑compress src to dst."""
+    with open(src, "rb") as fi, gzip.open(dst, "wb") as fo:
+        shutil.copyfileobj(fi, fo)
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--r1", required=True, help="Input R1 FASTQ(.gz)")
-    parser.add_argument("--r2", required=True, help="Input R2 FASTQ(.gz)")
-    parser.add_argument("--out_r1", required=True, help="Output R1 file path")
-    parser.add_argument("--out_r2", required=True, help="Output R2 file path")
-    parser.add_argument("--host", required=True, help="Folder with Bowtie2 indexes (*.1.bt2, etc.)")
-    parser.add_argument("--folder", required=True, help="Working directory")
-    parser.add_argument("--threads", default="1", help="Threads for Bowtie2")
-    args = parser.parse_args()
+    p = argparse.ArgumentParser()
+    p.add_argument("--r1", required=True)
+    p.add_argument("--r2", required=True)
+    p.add_argument("--out_r1", required=True)
+    p.add_argument("--out_r2", required=True)
+    p.add_argument("--folder", required=True)
+    p.add_argument("--threads", default="1")
+    a = p.parse_args()
 
-    sample_name = os.path.basename(args.r1).replace("_R1.fastq.gz", "")
+    os.makedirs(a.folder, exist_ok=True)
+    sample = os.path.basename(a.r1).replace("_R1.fastq.gz", "")
 
-    os.makedirs(args.folder, exist_ok=True)
-    curr_r1 = os.path.join(args.folder, f"{sample_name}_1.fastq")
-    curr_r2 = os.path.join(args.folder, f"{sample_name}_2.fastq")
-
-    # Copy the input reads to our working directory
-    shutil.copyfile(args.r1, curr_r1)
-    shutil.copyfile(args.r2, curr_r2)
-
-    # Create a summary file
-    summary_file = os.path.join(args.folder, "removal_summary.txt")
-    with open(summary_file, "w") as s:
+    summary_path = os.path.join(a.folder, "removal_summary.txt")
+    with open(summary_path, "w") as s:
         s.write("Removal Summary (paired-end)\n")
 
-    # Loop over each Bowtie2 index in --host_genome folder
-    # (We look for "*.1.bt2" to get the prefix.)
-    for f in sorted(glob.glob(os.path.join(args.host, "*.1.bt2"))):
-        base = os.path.basename(f).replace(".1.bt2", "")
-        index_path = f.replace(".1.bt2", "")
+    total_removed = 0
+    host_indexes = sorted(glob.glob(os.path.join("host_indexes", "*.1.bt2")))
+    host_indexes = [f.replace(".1.bt2", "").replace(".rev", "") for f in host_indexes]
+    host_indexes = list(set(host_indexes))
 
-        unmapped_prefix = os.path.join(args.folder, f"{base}_unmapped")
-        mapped_prefix   = os.path.join(args.folder, f"{base}_mapped")
-        stats_file      = os.path.join(args.folder, f"{base}_stats.txt")
+    with tempfile.TemporaryDirectory(dir=a.folder) as work:
+        curr_r1 = os.path.join(work, f"{sample}_1.fastq")
+        curr_r2 = os.path.join(work, f"{sample}_2.fastq")
+        shutil.copyfile(a.r1, curr_r1)
+        shutil.copyfile(a.r2, curr_r2)
 
-        cmd = [
-            "bowtie2",
-            "-x", index_path,
-            "-1", curr_r1,
-            "-2", curr_r2,
-            "-p", args.threads,
-            "--un-conc", f"{unmapped_prefix}.fastq",
-            "--al-conc", f"{mapped_prefix}.fastq"
-        ]
-        # Run Bowtie2 and capture its stderr to parse stats
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        with open(stats_file, "w") as sf:
-            sf.write(result.stderr)
+        for f in host_indexes:
+            base = os.path.basename(f).replace(".1.bt2", "")
+            idx = os.path.join("host_indexes", base)
 
-        # Parse out the count of reads aligned exactly once or more than once
-        exact, multi = 0, 0
-        with open(stats_file) as st:
-            for line in st:
+            unmapped = os.path.join(work, f"{base}_unmapped")
+            mapped = os.path.join(work, f"{base}_mapped")
+            stats = os.path.join(work, f"{base}_stats.txt")
+
+            cmd = [
+                "bowtie2", "-x", idx,
+                "-1", curr_r1, "-2", curr_r2,
+                "-p", a.threads,
+                "--very-sensitive",
+                "--end-to-end",
+                "--un-conc", f"{unmapped}.fastq",
+                "--al-conc", f"{mapped}.fastq"
+            ]
+            print("Running:", " ".join(cmd))
+            res = subprocess.run(cmd, capture_output=True, text=True)
+            with open(stats, "w") as sf:
+                sf.write(res.stderr)
+
+            exact = multi = unaligned = total = 0
+            for line in res.stderr.splitlines():
                 if "aligned exactly 1 time" in line:
                     exact = int(line.split()[0])
                 elif "aligned >1 times" in line:
                     multi = int(line.split()[0])
-        removed = exact + multi
+                elif "paired; of these:" in line:
+                    total = int(line.split()[0])
+                elif "aligned concordantly 0 times" in line:
+                    unaligned = int(line.split()[0])
 
-        with open(summary_file, "a") as s:
-            s.write(f"{base} removed {removed} read pairs\n")
+            removed = exact + multi
+            total_removed += removed
+            print(f"[{base}] {removed:,}/{total:,} mapped; {unaligned:,} left")
 
-        # Move the unmapped read pairs so next loop iteration only cleans further
-        shutil.move(f"{unmapped_prefix}.1.fastq", curr_r1)
-        shutil.move(f"{unmapped_prefix}.2.fastq", curr_r2)
+            with open(summary_path, "a") as s:
+                s.write(f"{base}\t{removed}\n")
 
-    # Move the final unmapped reads to the desired output locations
-    shutil.move(curr_r1, args.out_r1)
-    shutil.move(curr_r2, args.out_r2)
+            u1 = f"{unmapped}.1.fastq"
+            u2 = f"{unmapped}.2.fastq"
+            if os.path.exists(u1) and os.path.exists(u2):
+                shutil.move(u1, curr_r1)
+                shutil.move(u2, curr_r2)
+            else:
+                open(curr_r1, "a").close()
+                open(curr_r2, "a").close()
+                break
 
-    print("Host removal complete.")
-    print(f"Final unaligned read 1: {args.out_r1}")
-    print(f"Final unaligned read 2: {args.out_r2}")
-    print(f"See {summary_file} for the removal summary.")
+        gzip_out(curr_r1, a.out_r1 if a.out_r1.endswith(".gz") else f"{a.out_r1}.gz")
+        gzip_out(curr_r2, a.out_r2 if a.out_r2.endswith(".gz") else f"{a.out_r2}.gz")
+
+    print(f"\nTotal removed: {total_removed:,} pairs")
+    print(f"Final unaligned files:\n  R1 → {a.out_r1}\n  R2 → {a.out_r2}")
+    print("Detailed log:", summary_path)
 
 if __name__ == "__main__":
     main()
