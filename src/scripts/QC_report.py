@@ -258,8 +258,8 @@ def build_distribution_plot(data_R1, data_R2, data_json, max_reads, sample_name)
     fig.add_trace(go.Pie(
         values=donut_values,
         labels=donut_labels,
-        hole=0.95,
-        marker_colors=['#FF9999', '#99CCFF', '#99FF99'],
+        hole=0.9,
+        marker_colors = ['#FFCCCC', '#CCE5FF', '#CCFFCC'],
         textinfo='label+percent',
         textposition='auto',
         insidetextorientation='radial',
@@ -268,7 +268,7 @@ def build_distribution_plot(data_R1, data_R2, data_json, max_reads, sample_name)
         showlegend=False,
         textfont=dict(
             family='Arial, sans-serif',
-            size=12,
+            size=16,
             color='#404040'
         )
     ))
@@ -622,7 +622,7 @@ def main():
     for f in raw_fastqc_zips_R1:
         # e.g. "sample1_R1_fastqc.zip" -> "sample1"
         base = os.path.basename(f)
-        sample = basefig
+        sample = base.replace("_R1_fastqc.zip", "")
         samples.append(sample)
 
     # We'll store data in a structure:
