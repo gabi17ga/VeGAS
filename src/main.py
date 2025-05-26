@@ -139,16 +139,16 @@ def main():
     raw_data_files = list_fastq_files(data_dir)
 
     # Check if the output directory exists
-    if os.path.exists(output_dir) and not overwrite:
-        tqdm.write("[pegas]Output directory already exists. Use --overwrite to overwrite it or specify a different directory.")
-        sys.exit(1)
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+        tqdm.write(f"[pegas]Created output directory '{output_dir}'")
     else:
-        os.makedirs(output_dir, exist_ok=True)
+        tqdm.write(f"[pegas]Using existing output directory '{output_dir}'")
 
     # Copy new or modified files from raw_data_path to raw_data
     copy_files(output_dir, raw_data_files, "raw_data")
 
-    # Remove files in raw_data that do not exist in raw_data_path
+    # Remove files in output that do not exist in raw_data_path
     remove_extra_files(output_dir, "raw_data", raw_data_files)
 
     # Build the Snakemake command
