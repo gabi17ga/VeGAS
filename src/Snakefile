@@ -7,7 +7,7 @@ import warnings
 from glob import glob
 from tqdm import tqdm
 
-# warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore")
 
 # Load configuration variables
 install_path = config.get("install_path", None)
@@ -110,6 +110,7 @@ rule all:
         bam=expand("assembly/{sample}.bam", sample=sample_names),
         sorted_bam=expand("assembly/{sample}.bam.bai", sample=sample_names),
         fasta=expand("assembly/{sample}.fasta", sample=sample_names),
+        best_ref=expand("assembly/{sample}.best_ref.txt", sample=sample_names),
 
         # Report
         QC_report="QC.html",
@@ -206,7 +207,6 @@ rule host_removal:
     input:
         R1="trimmed/{sample}_R1.fastq.gz",
         R2="trimmed/{sample}_R2.fastq.gz",
-        index=expand("host_indexes/{host_genome}.1.bt2", host_genome=host_genome_names)
     output:
         R1="cleaned/{sample}_R1.fastq.gz",
         R2="cleaned/{sample}_R2.fastq.gz",
@@ -217,7 +217,7 @@ rule host_removal:
     shell:
         """
         echo 'Removing host reads for {wildcards.sample}' &&
-        python {host_removal_script} --r1 {input.R1} --r2 {input.R2} --out_r1 {output.R1} --out_r2 {output.R2} --host {input.index} --threads {ccores} --folder {work_directory}
+        python {host_removal_script} --r1 {input.R1} --r2 {input.R2} --out_r1 {output.R1} --out_r2 {output.R2} --threads {ccores} --folder {work_directory}
         """
 
 rule assembly:
@@ -228,7 +228,8 @@ rule assembly:
     output:
         bam="assembly/{sample}.bam",
         sorted_bam="assembly/{sample}.bam.bai",
-        fasta="assembly/{sample}.fasta"
+        fasta="assembly/{sample}.fasta",
+        best_ref="assembly/{sample}.best_ref.txt"
     conda:
         "envs/bowtie2_env.yml"
     threads:
