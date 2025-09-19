@@ -1,12 +1,16 @@
-#! /bin/bash
+#!/bin/bash
 
-docker run \
+# Run the pipeline inside the official Snakemake container.
+# Use -v to mount current dir, -e to pass environment variables, and place the image
+# name before the command to execute inside the container.
+docker run --rm \
   --platform linux/amd64 \
-  --volume .:/vegas \
-  --workdir /vegas \
-  host_genome=/vegas/data/host/ \
-  reference_genome=/vegas/data/reference/ \
-  snakemake/snakemake python src/main.py \
+  -v "$(pwd)":/vegas \
+  -w /vegas \
+  -e HOST_GENOME=/vegas/data/host/ \
+  -e REFERENCE_GENOME=/vegas/data/reference/ \
+  snakemake/snakemake \
+  python src/main.py \
     -d /vegas/data/input/ \
     -o /vegas/data/output/ \
     -r /vegas/data/reference/ \

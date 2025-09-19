@@ -87,16 +87,16 @@ rule all:
         fastqc_raw_html_R2=expand("fastqc_raw/{sample}_R2_fastqc.html", sample=sample_names),
         fastqc_trimmed_html_R1=expand("fastqc_trimmed/{sample}_R1_fastqc.html", sample=sample_names),
         fastqc_trimmed_html_R2=expand("fastqc_trimmed/{sample}_R2_fastqc.html", sample=sample_names),
-        fastqc_cleaned_html_R1=expand("fastqc_cleaned/{sample}_R1_fastqc.html", sample=sample_names),
-        fastqc_cleaned_html_R2=expand("fastqc_cleaned/{sample}_R2_fastqc.html", sample=sample_names),
+            fastqc_cleaned_html_R1=expand("fastqc_cleaned/{sample}_R1_fastqc.html", sample=sample_names),
+            fastqc_cleaned_html_R2=expand("fastqc_cleaned/{sample}_R2_fastqc.html", sample=sample_names),
 
-        # Cleaned and trimmed data
-        cleamed_R1=expand("cleaned/{sample}_R1.fastq.gz", sample=sample_names),
-        cleamed_R2=expand("cleaned/{sample}_R2.fastq.gz", sample=sample_names),
-        trimmed_R1=expand("trimmed/{sample}_R1.fastq.gz", sample=sample_names),
-        trimmed_R2=expand("trimmed/{sample}_R2.fastq.gz", sample=sample_names),
-        fastP_html=expand("fastp/{sample}_fastp.html", sample=sample_names),
-        fastP_json=expand("fastp/{sample}_fastp.json", sample=sample_names),
+            # Cleaned and trimmed data
+            cleaned_R1=expand("cleaned/{sample}_R1.fastq.gz", sample=sample_names),
+            cleaned_R2=expand("cleaned/{sample}_R2.fastq.gz", sample=sample_names),
+            trimmed_R1=expand("trimmed/{sample}_R1.fastq.gz", sample=sample_names),
+            trimmed_R2=expand("trimmed/{sample}_R2.fastq.gz", sample=sample_names),
+            fastp_html=expand("fastp/{sample}_fastp.html", sample=sample_names),
+            fastp_json=expand("fastp/{sample}_fastp.json", sample=sample_names),
 
         # Index building
         host_indexes=expand("host_indexes/{host_genome}.{ext}", 
@@ -195,13 +195,13 @@ rule build_ref_index:
     input:
         lambda wildcards: os.path.join(reference_genomes_folder, f"{wildcards.ref_genome}.fasta")
     output:
-        expand("ref_indexes/{{ref_genome}}.{ext}", ext=["1.bt2"])
+        expand("ref_indexes/{{ref_genome}}.{ext}", ext=["1.bt2","2.bt2","3.bt2","4.bt2","rev.1.bt2","rev.2.bt2"])
     conda:
         "envs/bowtie2_env.yml"
     shell:
         "echo 'Building reference index for {wildcards.ref_genome}' && "
         "cp {input} ref_indexes/{wildcards.ref_genome}.fasta && "
-        "bowtie2-build {input} ref_indexes/{wildcards.ref_genome} -p {ccores}"
+        "bowtie2-build ref_indexes/{wildcards.ref_genome}.fasta ref_indexes/{wildcards.ref_genome} -p {ccores}"
 
 rule host_removal:
     input:
@@ -251,8 +251,8 @@ rule QC_report:
         fastqc_cleaned_html_R2=expand("fastqc_cleaned/{sample}_R2_fastqc.html", sample=sample_names),
 
         # Cleaned and trimmed data
-        cleamed_R1=expand("cleaned/{sample}_R1.fastq.gz", sample=sample_names),
-        cleamed_R2=expand("cleaned/{sample}_R2.fastq.gz", sample=sample_names),
+        cleaned_R1=expand("cleaned/{sample}_R1.fastq.gz", sample=sample_names),
+        cleaned_R2=expand("cleaned/{sample}_R2.fastq.gz", sample=sample_names),
         trimmed_R1=expand("trimmed/{sample}_R1.fastq.gz", sample=sample_names),
         trimmed_R2=expand("trimmed/{sample}_R2.fastq.gz", sample=sample_names),
 

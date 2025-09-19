@@ -127,13 +127,14 @@ def main():
         tqdm.write(f"[pegas]Host directory '{host}' is empty.")
         sys.exit(1)
     
-    config_params = {
+    # Build config params as a list (order preserved) to pass to snakemake
+    config_params = [
         f"install_path={install_path}",
         f"output_dir={output_dir}",
         f"host_genome={host}",
         f"reference_genome={reference}",
         f"ccores={ccores}",
-    }
+    ]
     
     # List all FASTQ files in the raw_data_path and raw_data directories
     raw_data_files = list_fastq_files(data_dir)
@@ -178,7 +179,12 @@ def main():
     # Run the pipeline
     print("Running command:" + " ".join(command))
     # print("Unlock command:" + " ".join(unlock_command))
-    subprocess.run(unlock_command)
+    # Try unlocking first (non-fatal if it fails)
+    try:
+        subprocess.run(unlock_command, check=False)
+    except Exception:
+        tqdm.write("[pegas] Warning: unlock command failed (continuing)")
+
     result = subprocess.run(command)
     if result.returncode != 0:
         tqdm.write("Error: Pipeline failed.")

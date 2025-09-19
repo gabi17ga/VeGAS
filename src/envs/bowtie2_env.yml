@@ -1,7 +1,13 @@
 name: bowtie2_env
 channels:
-  - defaults
-  - bioconda
   - conda-forge
+  - bioconda
+  - defaults
 dependencies:
-  - bowtie2
+  - bowtie2=2.5.1
+  - samtools=1.17
+  - bcftools=1.17
+  - htslib=1.17
+  - gsl=2.7
+  - python=3.10
+  - pip
