@@ -132,6 +132,16 @@
       }catch(e){/* ignore */}
     }
 
+    // If the report HTML is opened directly from the filesystem (file://), IGV
+    // will try to load local files via file:// which browsers block or return
+    // status 0. Detect this and show a helpful message instructing the user
+    // to serve the `data/output` directory via the provided range-capable
+    // server (recommended) and open the page over HTTP.
+    if (window.location && window.location.protocol === 'file:') {
+      reportError('This report was opened via file://. Start the local server and open the page over HTTP.');
+      reportError('Example: ./scripts/start_igv_server.sh 8000 data/output && open http://127.0.0.1:8000/igv_report.html');
+    }
+
     function buildSampleList() {
       samplesDiv.innerHTML = '';
       rows.forEach((r, i) => {
@@ -159,6 +169,7 @@
     }
 
     async function initIGV() {
+      if (window.location && window.location.protocol === 'file:') return;
       // Use absolute URLs (same origin) to avoid file:// or mixed-origin issues that give status 0
       const base = (window.location && window.location.origin) ? window.location.origin + '/' : '';
       const options = { locus: rows.length && rows[0].locus ? rows[0].locus : undefined };
