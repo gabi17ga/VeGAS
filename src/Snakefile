@@ -24,7 +24,11 @@ ccores = config.get("ccores", 1)
 # print(f"Number of Cores: {ccores}")
 
 # Ensure the raw_data directory exists
-os.makedirs("raw_data", exist_ok=True)
+try:
+    os.makedirs("raw_data", exist_ok=True)
+except FileExistsError:
+    # If a non-directory (e.g. a symlink) exists at this path, leave it as-is.
+    pass
 
 install_path = f"{install_path}"
 
@@ -64,6 +68,8 @@ host_removal_script = os.path.join(install_path, "scripts", "host_removal.py")
 assembly_script = os.path.join(install_path, "scripts", "assembly.py")
 QC_report_script = os.path.join(install_path, "scripts", "QC_report.py")
 assembly_report_script = os.path.join(install_path, "scripts", "assembly_report.py")
+igv_report_script = os.path.join(install_path, "scripts", "igv_report.py")
+phylo_script = os.path.join(install_path, "scripts", "phylo.py")
 
 # Determine the list of host and reference genome names
 host_genomes = glob(os.path.join(str(host_genomes_folder), "*.fasta"))
@@ -75,8 +81,15 @@ ref_genome_names = [os.path.splitext(os.path.basename(g))[0] for g in ref_genome
 print(f"Reference Genomes: {ref_genome_names}")
 
 # Create index directories
-os.makedirs("host_indexes", exist_ok=True)
-os.makedirs("ref_indexes", exist_ok=True)
+for d in ("host_indexes", "ref_indexes"):
+    try:
+        os.makedirs(d, exist_ok=True)
+    except FileExistsError:
+        # If a non-directory (for example, a symlink pointing outside the
+        # container) exists at this path, skip creating it. Snakemake rules
+        # that expect files inside these directories should still work as
+        # long as the symlink points to the right location.
+        pass
 
 # ================= Snakemake Workflow =================
 
@@ -114,7 +127,9 @@ rule all:
 
         # Report
         QC_report="QC.html",
-        assembly_report="assembly_report.html"
+        assembly_report="assembly_report.html",
+        igv_report="igv_report.html",
+        phylogeny="phylogeny/tree.nwk"
 
 rule fastp:
     input:
@@ -293,4 +308,29 @@ rule assembly_report:
         mkdir -p report &&
         echo Generating assembly report &&
         python {assembly_report_script} --folder {work_directory} --install_path {install_path}
+        """
+
+rule igv_report:
+    input:
+        bam=expand("assembly/{sample}.bam", sample=sample_names)
+    output:
+        "igv_report.html"
+    conda:
+        "envs/report_env.yml"
+    shell:
+        """
+        mkdir -p report &&
+        python {igv_report_script} --root {work_directory} --bamdirs data/output/assembly data/output --template {install_path}/html_templates/igv.html --out {output}
+        """
+
+rule phylogeny:
+    input:
+        fasta=expand("assembly/{sample}.fasta", sample=sample_names)
+    output:
+        "phylogeny/tree.nwk"
+    conda:
+        "envs/phylo_env.yml"
+    shell:
+        """
+        python {phylo_script} --assembly-dir assembly --out-dir phylogeny
         """

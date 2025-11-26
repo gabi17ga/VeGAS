@@ -12,7 +12,7 @@ docker run --rm \
   snakemake/snakemake \
   python src/main.py \
     -d /vegas/data/input/ \
-    -o /vegas/data/output/ \
+  -o /vegas/data/output/ \
     -r /vegas/data/reference/ \
     -t /vegas/data/host/ \
     -c 1 -cc 1 --overwrite

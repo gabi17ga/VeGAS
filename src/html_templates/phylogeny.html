@@ -1,0 +1,230 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Phylogeny</title>
+  <style>
+    :root{ --bg:#fff; --panel:#f7f8fa; --muted:#666; --accent:#2b6cb0; }
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial; margin: 12px; background:var(--bg); color: #222 }
+    .container { max-width: 1400px; margin: 0 auto; }
+    #tree-panel { background: var(--panel); border: 1px solid #e3e6ea; padding: 10px; border-radius: 6px; }
+    #controls { display:flex; gap:12px; align-items:center; margin-bottom:8px; }
+    #tree { width: 100%; overflow: auto; }
+    svg { display:block; }
+    .label { font-size: 13px; fill: #111; }
+    .leaf-label { font-size: 14px; fill: #111; }
+    .branch { stroke: #333; stroke-width: 1.2; }
+    .node-dot { fill: white; stroke: var(--accent); stroke-width: 1.4; }
+    .branch-length { font-size: 12px; fill: var(--muted); }
+    .internal-label { font-size: 12px; font-style: italic; fill: #444 }
+    .tooltip { pointer-events: none; font-size:13px; }
+    .muted { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <h2>Phylogenetic tree</h2>
+  <div class="container">
+    <div id="tree-panel">
+      <div id="controls">
+        <label><input type="checkbox" id="show-branch-lengths" checked> Show branch lengths</label>
+        <div class="muted">Hover nodes/branches for details. Use the scrollbar / resize window to fit.</div>
+      </div>
+      <div id="tree"></div>
+    </div>
+  </div>
+
+  <!-- newick content will be injected here by the generator as the contents of the script tag -->
+  <script id="newick-data" type="text/plain"></script>
+
+  <script>
+  // Minimal Newick parser (handles basic trees with node names and branch lengths)
+  function parseNewick(s) {
+    let i = 0;
+    function eatWhitespace() { while (s[i] && /\s/.test(s[i])) i++; }
+    function parseSubtree() {
+      eatWhitespace();
+      let node = { name: null, length: 0, children: [] };
+      if (s[i] === '(') {
+        i++; // consume '('
+        while (true) {
+          node.children.push(parseSubtree());
+          eatWhitespace();
+          if (s[i] === ',') { i++; continue; }
+          if (s[i] === ')') { i++; break; }
+          break;
+        }
+      }
+      // parse name (optional)
+      eatWhitespace();
+      let name = '';
+      while (s[i] && !/[:;,()\s]/.test(s[i])) { name += s[i++]; }
+      if (name) node.name = name;
+      // parse branch length (optional)
+      eatWhitespace();
+      if (s[i] === ':') {
+        i++; eatWhitespace();
+        let num = '';
+        while (s[i] && /[0-9.eE+-]/.test(s[i])) { num += s[i++]; }
+        node.length = parseFloat(num) || 0;
+      }
+      return node;
+    }
+    const tree = parseSubtree();
+    return tree;
+  }
+
+  // Compute a simple horizontal layout: x = cumulative branch length, y = index among leaves
+  function layoutTree(node) {
+    let leaves = [];
+    function collectLeaves(n) {
+      if (!n.children || n.children.length === 0) {
+        leaves.push(n);
+      } else {
+        n.children.forEach(collectLeaves);
+      }
+    }
+    collectLeaves(node);
+    // assign y positions
+    leaves.forEach((leaf, idx) => leaf._y = idx);
+
+    // compute x positions by walking and accumulating branch lengths
+    function setXY(n, x) {
+      n._x = x;
+      if (!n.children || n.children.length === 0) return;
+      n.children.forEach(child => setXY(child, x + (child.length || 0)));
+      // set internal y as average of child y
+      n._y = n.children.reduce((sum, c) => sum + c._y, 0) / n.children.length;
+    }
+    // Start at x = 0 for root
+    setXY(node, 0);
+    return {node, leavesCount: leaves.length};
+  }
+
+  function render(tree, container) {
+  // increase left padding to give more space for labels and increase vertical spacing
+  const pad = {left: 260, top: 24, right: 24, bottom: 24};
+  const spacingY = 26;
+  const fontHeight = 14;
+    const {node, leavesCount} = layoutTree(tree);
+    const width = Math.max(600, (function maxX(n){ let m=n._x; if(n.children) n.children.forEach(c=>m=Math.max(m,maxX(c))); return m; })(node)*100 + pad.left + pad.right);
+    const height = Math.max(200, leavesCount * spacingY + pad.top + pad.bottom);
+
+    const svgNS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNS, 'svg');
+  // use viewBox so SVG is responsive inside container with overflow scroll
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('width', '100%');
+  svg.setAttribute('height', height);
+
+    // map x scale: tree._x (in branch length units) to pixels
+    // find max x
+    let maxx = 0;
+    (function findMax(n){ if(n._x>maxx) maxx=n._x; if(n.children) n.children.forEach(findMax); })(node);
+    const xScale = (x) => pad.left + (maxx? (x / maxx) * (width - pad.left - pad.right) : 0);
+    const yScale = (y) => pad.top + y * spacingY;
+
+    // draw edges
+    function drawEdges(n) {
+      if (n.children) {
+        n.children.forEach(c=>{
+          // vertical line from parent y to child y at parent's x
+          const px = xScale(n._x), py = yScale(n._y);
+          const cx = xScale(c._x), cy = yScale(c._y);
+          // horizontal from parent to child
+          const hline = document.createElementNS(svgNS, 'line');
+          hline.setAttribute('x1', px); hline.setAttribute('y1', cy);
+          hline.setAttribute('x2', cx); hline.setAttribute('y2', cy);
+          hline.setAttribute('class', 'branch');
+          svg.appendChild(hline);
+          // vertical from parent y to child y at parent x
+          const vline = document.createElementNS(svgNS, 'line');
+          vline.setAttribute('x1', px); vline.setAttribute('y1', py);
+          vline.setAttribute('x2', px); vline.setAttribute('y2', cy);
+          vline.setAttribute('class', 'branch');
+          svg.appendChild(vline);
+          // branch length label (midpoint of horizontal line)
+          if (document.getElementById('show-branch-lengths') && document.getElementById('show-branch-lengths').checked && (c.length || c.length === 0)) {
+            const bl = document.createElementNS(svgNS, 'text');
+            const midx = (px + cx) / 2;
+            bl.setAttribute('x', midx + 4);
+            bl.setAttribute('y', cy - 4);
+            bl.setAttribute('class', 'branch-length');
+            bl.textContent = (c.length !== undefined && c.length !== null) ? Number(c.length).toFixed(3) : '';
+            svg.appendChild(bl);
+          }
+          // small node circle at child connection
+          const dot = document.createElementNS(svgNS, 'circle');
+          dot.setAttribute('cx', cx);
+          dot.setAttribute('cy', cy);
+          dot.setAttribute('r', 3.5);
+          dot.setAttribute('class', 'node-dot');
+          // tooltip via <title>
+          const title = document.createElementNS(svgNS, 'title');
+          title.textContent = `${c.name || '(internal)'}${(c.length!==undefined? ' | length: '+c.length : '')}`;
+          dot.appendChild(title);
+          svg.appendChild(dot);
+          drawEdges(c);
+        });
+      }
+    }
+    drawEdges(node);
+
+    // draw labels for leaves
+    function drawLabels(n) {
+      if (!n.children || n.children.length === 0) {
+        const x = xScale(n._x);
+        const y = yScale(n._y);
+        const txt = document.createElementNS(svgNS, 'text');
+        txt.setAttribute('x', x + 8);
+        txt.setAttribute('y', y + fontHeight/2 + 2);
+        txt.setAttribute('class', 'leaf-label');
+        txt.textContent = n.name || '';
+        // attach tooltip
+        const g = document.createElementNS(svgNS, 'g');
+        const title = document.createElementNS(svgNS, 'title');
+        title.textContent = `${n.name || ''}${(n.length!==undefined? ' | length: '+n.length : '')}`;
+        g.appendChild(title);
+        g.appendChild(txt);
+        svg.appendChild(g);
+      } else {
+        // internal labels (if present)
+        if (n.name) {
+          const x = xScale(n._x);
+          const y = yScale(n._y);
+          const t = document.createElementNS(svgNS, 'text');
+          t.setAttribute('x', x - 6);
+          t.setAttribute('y', y - 6);
+          t.setAttribute('class', 'internal-label');
+          t.setAttribute('text-anchor', 'end');
+          t.textContent = n.name;
+          svg.appendChild(t);
+        }
+        n.children.forEach(drawLabels);
+      }
+    }
+    drawLabels(node);
+
+    // replace container
+    container.innerHTML = '';
+    container.appendChild(svg);
+  }
+
+  // On load, read newick string and render
+  (function(){
+    const el = document.getElementById('newick-data');
+    const newick = el.textContent && el.textContent.trim();
+    const container = document.getElementById('tree');
+    if (!newick) {
+      container.innerHTML = '<em>No tree data found. Run the phylogeny step to generate phylogeny/tree.nwk</em>';
+      return;
+    }
+    try {
+      const tree = parseNewick(newick.replace(/;\s*$/, ''));
+      render(tree, container);
+    } catch (e) {
+      container.innerHTML = '<pre>Error parsing tree:\n' + e.toString() + '</pre>';
+    }
+  })();
+  </script>
+</body>
+</html>

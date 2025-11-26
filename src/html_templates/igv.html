@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IGV stacked report</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; display: flex; height: 100vh; }
+    #sidebar { width: 300px; border-right: 1px solid #ccc; padding: 10px; overflow:auto }
+    #viewer { flex: 1; display:flex; flex-direction:column }
+    #igvDiv { flex: 1; }
+    .sample-row { display:flex; align-items:center; gap:8px; padding:4px; border-bottom:1px solid #eee }
+    .controls { margin-bottom:8px }
+    input[type=text] { width:180px }
+    </style>
+    <!-- Attempt to load local IGV CSS (for offline/local use). If missing, fall back to CDN. -->
+    <link id="igv-css-local" rel="stylesheet" href="vendor/igv.min.css">
+    <script>
+      (function(){
+        // If the local CSS is missing, some browsers won't fire onerror for link elements.
+        // Use a short HEAD fetch to confirm availability and fall back to CDN if needed.
+        var localHref = document.getElementById('igv-css-local').href;
+        var cdnCss = 'https://unpkg.com/igv/dist/igv.min.css';
+        function loadCdn(){
+          var l = document.createElement('link');
+          l.rel = 'stylesheet';
+          l.href = cdnCss;
+          document.head.appendChild(l);
+          try{ document.getElementById('errors') && document.getElementById('errors').appendChild(document.createTextNode('Loaded IGV CSS from CDN')); }catch(e){}
+        }
+        // Try a HEAD request to the local CSS; if it fails, fall back.
+        try{
+          fetch(localHref, {method: 'HEAD'}).then(function(resp){ if(!resp.ok) loadCdn(); }).catch(function(){ loadCdn(); });
+        }catch(e){ loadCdn(); }
+      })();
+    </script>
+  </head>
+  <body>
+
+  <div id="sidebar">
+      <h3>Samples</h3>
+      <div class="controls">
+        <button id="loadSelected">Load selected</button>
+        <button id="clearTracks">Clear tracks</button>
+      </div>
+      <div id="errors" style="color:#900; margin-top:8px; max-height:200px; overflow:auto; font-size:12px; white-space:pre-wrap;"></div>
+      <div id="samples"></div>
+      <hr>
+      <div>
+        <label for="locus">Locus:</label>
+        <input id="locus" type="text" placeholder="chr:start-end">
+        <button id="go">Go</button>
+      </div>
+    </div>
+
+    <div id="viewer">
+      <div style="padding:8px; border-bottom:1px solid #ccc;">
+        <strong>IGV stacked viewer</strong>
+      </div>
+      <div id="igvDiv"></div>
+    </div>
+
+    <!-- Loader: prefer local vendor then fall back to CDNs -->
+    <script>
+      (function(){
+        var local = 'vendor/igv.min.js';
+        var cdnPrimary = 'https://unpkg.com/igv/dist/igv.min.js';
+        var cdnSecondary = 'https://cdn.jsdelivr.net/npm/igv/dist/igv.min.js';
+        function load(src, onerror){
+          var s = document.createElement('script');
+          s.src = src;
+          s.async = false;
+          s.crossOrigin = '';
+          s.onload = function(){
+            try{ window._igv_script_status = window._igv_script_status || []; window._igv_script_status.push({src:src, status:'loaded'}); }catch(e){}
+          };
+          s.onerror = function(ev){
+            try{ window._igv_script_status = window._igv_script_status || []; window._igv_script_status.push({src:src, status:'error'}); }catch(e){}
+            if (onerror) onerror(ev);
+          };
+          document.head.appendChild(s);
+        }
+        load(local, function(){
+          load(cdnPrimary, function(){
+            load(cdnSecondary, function(){
+              try{ window._igv_script_status = window._igv_script_status || []; window._igv_script_status.push({src:'all', status:'error-final'}); }catch(e){}
+            });
+          });
+        });
+      })();
+    </script>
+
+    <script>
+      // global error capture -> append to errors panel (kept)
+      window.addEventListener('error', function(e){
+        try{
+          const d = document.getElementById('errors');
+          if(d){
+            const p = document.createElement('div');
+            p.textContent = new Date().toISOString() + ' - JS ERROR: ' + (e && e.message ? e.message : String(e));
+            d.appendChild(p);
+          }
+        }catch(_){ }
+      });
+      // NOTE: removed automatic 'Script load status' and 'window.igv present' messages
+      // from the errors panel to keep the UI clean. If you need debugging info,
+      // the loader still records statuses in window._igv_script_status and you
+      // can open the browser console and inspect that array.
+    </script>
+
+    <script>
+    // rows injected by generator
+    const rows = __ROWS_JSON__;
+
+    const samplesDiv = document.getElementById('samples');
+    const loadBtn = document.getElementById('loadSelected');
+    const clearBtn = document.getElementById('clearTracks');
+    const locusInput = document.getElementById('locus');
+    const goBtn = document.getElementById('go');
+
+    let browser = null;
+    let loadedTracks = [];
+
+    function reportError(msg){
+      try{
+        const d = document.getElementById('errors');
+        if(d){
+          const p = document.createElement('div');
+          p.textContent = (new Date()).toISOString() + ' - ' + String(msg);
+          d.appendChild(p);
+        }
+      }catch(e){/* ignore */}
+    }
+
+    function buildSampleList() {
+      samplesDiv.innerHTML = '';
+      rows.forEach((r, i) => {
+        const el = document.createElement('div');
+        el.className = 'sample-row';
+        el.innerHTML = `<input type="checkbox" data-index="${i}" id="s_${i}"><label for="s_${i}" data-index="${i}">${r.name}</label>`;
+        samplesDiv.appendChild(el);
+
+        // clicking the sample name will select it, fill the locus box and navigate the IGV viewer (if ready)
+        try{
+          const lbl = el.querySelector('label');
+          lbl.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            try{
+              const cb = el.querySelector('input[type=checkbox]');
+              if(cb) cb.checked = true;
+              if (r.locus) {
+                locusInput.value = r.locus;
+                if (browser) browser.search(r.locus);
+              }
+            }catch(_){ }
+          });
+        }catch(_){ }
+      });
+    }
+
+    async function initIGV() {
+      // Use absolute URLs (same origin) to avoid file:// or mixed-origin issues that give status 0
+      const base = (window.location && window.location.origin) ? window.location.origin + '/' : '';
+      const options = { locus: rows.length && rows[0].locus ? rows[0].locus : undefined };
+      if (rows.length && rows[0].fasta) {
+        options.genome = { fastaURL: base + rows[0].fasta.replace(/^\/+/,''), indexURL: rows[0].fai ? base + rows[0].fai.replace(/^\/+/, '') : undefined };
+      }
+      const igvDiv = document.getElementById('igvDiv');
+      try{
+        browser = await igv.createBrowser(igvDiv, options);
+      }catch(e){ reportError('Failed to init IGV: ' + e); }
+    }
+
+    function buildTrackForRow(r) {
+      const base = (window.location && window.location.origin) ? window.location.origin + '/' : '';
+      return {
+        name: r.name,
+        type: 'alignment',
+        format: 'bam',
+        url: (r.bam && r.bam.startsWith('http')) ? r.bam : base + (r.bam||'').replace(/^\/+/,''),
+        indexURL: (r.bai && r.bai.startsWith('http')) ? r.bai : (r.bai ? base + r.bai.replace(/^\/+/, '') : undefined),
+        visibilityWindow: 10000
+      };
+    }
+
+    loadBtn.addEventListener('click', async () => {
+      if (!browser) return;
+      const checks = Array.from(document.querySelectorAll('#samples input[type=checkbox]'));
+      const toLoad = checks.filter(c => c.checked).map(c => rows[parseInt(c.dataset.index,10)]);
+      for (const r of toLoad) {
+        const track = buildTrackForRow(r);
+        try {
+          const t = await browser.loadTrack(track);
+          loadedTracks.push(t);
+        } catch (err) {
+          reportError('Failed to load track ' + r.name + ': ' + (err && err.message ? err.message : String(err)));
+        }
+      }
+    });
+
+    clearBtn.addEventListener('click', () => {
+      if (!browser) return;
+      for (const t of loadedTracks.slice()) {
+        try { browser.removeTrack(t); } catch(e){}
+      }
+      loadedTracks = [];
+    });
+
+    goBtn.addEventListener('click', () => {
+      const locus = locusInput.value.trim();
+      if (!locus) return;
+      if (browser) browser.search(locus);
+    });
+
+    buildSampleList();
+
+    function whenIgvReady(cb, timeoutMs=10000){
+      if (window.igv) return cb();
+      const start = Date.now();
+      const t = setInterval(() => {
+        if (window.igv){ clearInterval(t); cb(); }
+        else if (Date.now() - start > timeoutMs){ clearInterval(t); reportError('igv did not load within ' + timeoutMs + 'ms'); }
+      }, 100);
+    }
+
+    whenIgvReady(initIGV);
+    </script>
+
+    </body>
+    </html>

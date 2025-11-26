@@ -1,0 +1,9 @@
+name: phylo_env
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - mafft
+  - fasttree
+  - python=3.10
