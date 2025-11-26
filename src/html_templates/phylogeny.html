@@ -135,12 +135,20 @@
           hline.setAttribute('x1', px); hline.setAttribute('y1', cy);
           hline.setAttribute('x2', cx); hline.setAttribute('y2', cy);
           hline.setAttribute('class', 'branch');
+          // add a tooltip/title for the horizontal branch showing name and length
+          const htitle = document.createElementNS(svgNS, 'title');
+          htitle.textContent = `${c.name || '(internal)'}${(c.length!==undefined? ' | length: '+Number(c.length).toFixed(3) : '')}`;
+          hline.appendChild(htitle);
           svg.appendChild(hline);
           // vertical from parent y to child y at parent x
           const vline = document.createElementNS(svgNS, 'line');
           vline.setAttribute('x1', px); vline.setAttribute('y1', py);
           vline.setAttribute('x2', px); vline.setAttribute('y2', cy);
           vline.setAttribute('class', 'branch');
+          // add title for the vertical connector as well
+          const vtitle = document.createElementNS(svgNS, 'title');
+          vtitle.textContent = `${c.name || '(internal)'}${(c.length!==undefined? ' | length: '+Number(c.length).toFixed(3) : '')}`;
+          vline.appendChild(vtitle);
           svg.appendChild(vline);
           // branch length label (midpoint of horizontal line)
           if (document.getElementById('show-branch-lengths') && document.getElementById('show-branch-lengths').checked && (c.length || c.length === 0)) {
@@ -160,7 +168,7 @@
           dot.setAttribute('class', 'node-dot');
           // tooltip via <title>
           const title = document.createElementNS(svgNS, 'title');
-          title.textContent = `${c.name || '(internal)'}${(c.length!==undefined? ' | length: '+c.length : '')}`;
+          title.textContent = `${c.name || '(internal)'}${(c.length!==undefined? ' | length: '+Number(c.length).toFixed(3) : '')}`;
           dot.appendChild(title);
           svg.appendChild(dot);
           drawEdges(c);
@@ -221,6 +229,13 @@
     try {
       const tree = parseNewick(newick.replace(/;\s*$/, ''));
       render(tree, container);
+      // attach live handler so toggling branch-lengths re-renders the tree
+      const checkbox = document.getElementById('show-branch-lengths');
+      if (checkbox) {
+        checkbox.addEventListener('change', function(){
+          try { render(tree, container); } catch(e) { console.error('Re-render error', e); }
+        });
+      }
     } catch (e) {
       container.innerHTML = '<pre>Error parsing tree:\n' + e.toString() + '</pre>';
     }
