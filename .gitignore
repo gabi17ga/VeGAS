@@ -174,3 +174,10 @@ cython_debug/
 .pypirc
 
 data
+
+# Snakemake
+.snakemake/
+.smk_tmp/
+
+# Snippy outputs (workflow generated)
+snippy/
