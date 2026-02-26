@@ -3,7 +3,15 @@ import argparse, pathlib, numpy as np, pysam, jinja2, sys
 from pyfaidx import Fasta
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
-from utils import get_sample_names
+try:
+    from utils import get_sample_names
+except Exception:
+    # If running as a script from another cwd, add scripts dir to path and retry
+    import sys, os
+    scripts_dir = os.path.dirname(__file__)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    from utils import get_sample_names
 
 def contig_lengths(fa):
     obj = Fasta(fa, as_raw=True, strict_bounds=False)

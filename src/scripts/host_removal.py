@@ -31,8 +31,20 @@ def main():
     with tempfile.TemporaryDirectory(dir=a.folder) as work:
         curr_r1 = os.path.join(work, f"{sample}_1.fastq")
         curr_r2 = os.path.join(work, f"{sample}_2.fastq")
-        shutil.copyfile(a.r1, curr_r1)
-        shutil.copyfile(a.r2, curr_r2)
+
+        # If inputs are gzipped, decompress them into the temp FASTQ files.
+        # Otherwise copy as-is.
+        if a.r1.endswith('.gz'):
+            with gzip.open(a.r1, 'rb') as fi, open(curr_r1, 'wb') as fo:
+                shutil.copyfileobj(fi, fo)
+        else:
+            shutil.copyfile(a.r1, curr_r1)
+
+        if a.r2.endswith('.gz'):
+            with gzip.open(a.r2, 'rb') as fi, open(curr_r2, 'wb') as fo:
+                shutil.copyfileobj(fi, fo)
+        else:
+            shutil.copyfile(a.r2, curr_r2)
 
         for f in host_indexes:
             base = os.path.basename(f).replace(".1.bt2", "")

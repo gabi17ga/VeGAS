@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Alignment viewer</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 12px; }
+    #top { display:flex; gap:12px; align-items:center }
+    #alignmentPre { white-space: pre; font-family: monospace; background:#f8f8f8; padding:12px; border:1px solid #eee; max-height:70vh; overflow:auto }
+    #viewerContainer { margin-top:12px }
+    .notice { color:#555; font-size:13px }
+    .msa-row { margin-bottom:6px; }
+    .msa-header { font-weight:600; margin-bottom:4px }
+    .msa-seq { font-family: monospace; font-size:12px; line-height:1; white-space:pre; }
+    .nt { display:inline-block; width:10px; text-align:center; padding:0 1px; background:transparent }
+    /* Only mark mismatches against the reference */
+    .nt.mismatch { background:#f5b4b4; color:#000 }
+    .col-highlight { outline:1px solid #ff0; }
+    #controls { margin-top:8px; display:flex; gap:8px; align-items:center }
+    .nt.no-color { background: transparent !important; color: inherit !important }
+    .aa { display:inline-block; width:22px; text-align:center; padding:2px 1px; margin:0 1px; border-radius:3px; background:transparent }
+    /* Only mark AA mismatches */
+    .aa.mismatch { background:#f5b4b4 }
+  </style>
+  <!-- Try to load JalviewJS (if available) then fall back to a simple textual viewer + download link -->
+  <script>
+    (function(){
+      window._jalview_script_status = window._jalview_script_status || [];
+      var local = 'vendor/jalview.min.js';
+      var cdns = [
+        'https://www.jalview.org/jalviewweb/jalview.js',
+        'https://cdn.jsdelivr.net/npm/jalviewjs/dist/jalview.min.js'
+      ];
+      function load(src, onerror){
+        var s = document.createElement('script');
+        s.src = src; s.async = false; s.onload = function(){ window._jalview_script_status.push({src:src,status:'loaded'}); };
+        s.onerror = function(){ window._jalview_script_status.push({src:src,status:'error'}); if(onerror) onerror(); };
+        document.head.appendChild(s);
+      }
+      load(local, function(){
+        (function next(i){ if(i>=cdns.length) return; load(cdns[i], function(){ next(i+1); }); })(0);
+      });
+    })();
+  </script>
+</head>
+<body>
+  <div id="top">
+    <h2>Alignment viewer</h2>
+    <div class="notice">This page attempts to use JalviewJS if available. If JalviewJS is not found, a plain FASTA viewer is shown below and the file can be downloaded.</div>
+  </div>
+
+  <div id="meta">
+    <a id="downloadLink" href="__ALIGNMENT_PATH__" download>Download alignment (FASTA)</a>
+  </div>
+
+  <div id="viewerContainer">
+    <div id="jalviewStatus" class="notice" style="margin-bottom:8px"></div>
+    <div id="controls">
+      <label>Reference: <select id="refSelect"><option>auto</option></select></label>
+      <label><input type="checkbox" id="aaMode"> AA mode</label>
+      <label><input type="checkbox" id="singleMode"> Single read mode</label>
+      <label>Read: <select id="readSelect"></select></label>
+      <button id="prevRead" title="Previous read">◀</button>
+      <button id="nextRead" title="Next read">▶</button>
+      <label>Columns per block: <select id="blockSize"><option>60</option><option>80</option><option>100</option></select></label>
+      <button id="toggleColor">Toggle color</button>
+      <span class="notice">Click any nucleotide/amino-acid to highlight its column across sequences.</span>
+    </div>
+    <div id="alignmentRender">Loading alignment...</div>
+  </div>
+
+  <script>
+    // Simple FASTA parser
+    function parseFasta(text){
+      const seqs = [];
+      const lines = text.split(/\r?\n/);
+      let name = null, seqParts = [];
+      for(const line of lines){
+        if(line.startsWith('>')){
+          if(name){ seqs.push({name, seq: seqParts.join('')}); }
+          name = line.substring(1).trim(); seqParts = [];
+        } else if(line.trim() !== ''){ seqParts.push(line.trim()); }
+      }
+      if(name){ seqs.push({name, seq: seqParts.join('')}); }
+      return seqs;
+    }
+
+    // Genetic code table (standard)
+    const CODON_TABLE = {
+      'TTT':'F','TTC':'F','TTA':'L','TTG':'L','CTT':'L','CTC':'L','CTA':'L','CTG':'L',
+      'ATT':'I','ATC':'I','ATA':'I','ATG':'M','GTT':'V','GTC':'V','GTA':'V','GTG':'V',
+      'TCT':'S','TCC':'S','TCA':'S','TCG':'S','CCT':'P','CCC':'P','CCA':'P','CCG':'P',
+      'ACT':'T','ACC':'T','ACA':'T','ACG':'T','GCT':'A','GCC':'A','GCA':'A','GCG':'A',
+      'TAT':'Y','TAC':'Y','TAA':'*','TAG':'*','CAT':'H','CAC':'H','CAA':'Q','CAG':'Q',
+      'AAT':'N','AAC':'N','AAA':'K','AAG':'K','GAT':'D','GAC':'D','GAA':'E','GAG':'E',
+      'TGT':'C','TGC':'C','TGA':'*','TGG':'W','CGT':'R','CGC':'R','CGA':'R','CGG':'R',
+      'AGT':'S','AGC':'S','AGA':'R','AGG':'R','GGT':'G','GGC':'G','GGA':'G','GGG':'G'
+    };
+
+    function translateSeq(ntseq){
+      // pad to multiple of 3
+      const s = (ntseq||'').toUpperCase();
+      const pad = (3 - (s.length % 3)) % 3;
+      const t = s + '-'.repeat(pad);
+      const aa = [];
+      for(let i=0;i<t.length;i+=3){
+        const codon = t.substr(i,3);
+        if(codon.indexOf('-') !== -1 || /[^ACGT]/.test(codon)){
+          aa.push('X');
+        } else {
+          aa.push(CODON_TABLE[codon] || 'X');
+        }
+      }
+      return aa;
+    }
+
+    function translateAll(seqs){
+      return seqs.map(s => ({name: s.name, aa: translateSeq(s.seq)}));
+    }
+
+    function computeIdentityStats(seqs, refIdx, mode){
+      // mode: 'nt' or 'aa'
+      if(mode === 'aa'){
+        const aaSeqs = translateAll(seqs);
+        const ref = aaSeqs[refIdx].aa;
+        const stats = aaSeqs.map((s,i) => {
+          if(i===refIdx) return {matches:null,compared:null,percent:100};
+          let matches = 0, compared = 0;
+          for(let k=0;k<ref.length;k++){
+            const a = ref[k]||'X'; const b = s.aa[k]||'X';
+            if(a === '-' && b === '-') continue;
+            if(a === '-' || b === '-') { compared++; continue; }
+            compared++;
+            if(a === b && a !== 'X') matches++;
+          }
+          const percent = compared ? (matches / compared * 100) : 0;
+          return {matches, compared, percent};
+        });
+        return stats;
+      } else {
+        // nucleotide-level (existing behaviour)
+        const ref = seqs[refIdx].seq;
+        const stats = seqs.map((s,i) => {
+          if(i===refIdx) return {matches:null,compared:null,percent:100};
+          let matches = 0, compared = 0;
+          for(let k=0;k<ref.length;k++){
+            const a = ref[k]||'-'; const b = s.seq[k]||'-';
+            if(a === '-' && b === '-') continue; // both gaps, skip
+            if(a === '-' || b === '-') { compared++; continue; }
+            compared++;
+            if(a.toUpperCase() === b.toUpperCase()) matches++;
+          }
+          const percent = compared ? (matches / compared * 100) : 0;
+          return {matches, compared, percent};
+        });
+        return stats;
+      }
+    }
+
+    function renderAlignment(seqs, blockSize, stats, refIdx, mode){
+      const out = document.createElement('div');
+      out.id = 'msaOut';
+      const len = seqs.length ? seqs[0].seq.length : 0;
+      if(mode === 'aa'){
+        // amino-acid mode: translate sequences and render per-codon blocks
+        const aaSeqs = translateAll(seqs);
+        const aaLen = aaSeqs[0].aa.length;
+        for(let start=0; start<aaLen; start += Math.floor(blockSize/3)){
+          const block = document.createElement('div'); block.className = 'msa-block';
+          for(const s of aaSeqs){
+            const row = document.createElement('div'); row.className = 'msa-row';
+            const header = document.createElement('div'); header.className = 'msa-header';
+            const idx = aaSeqs.indexOf(s);
+            const pct = stats && stats[idx] && stats[idx].percent != null ? stats[idx].percent.toFixed(1) : '';
+            header.textContent = s.name + (idx===refIdx ? ' (REF)' : (pct !== '' ? ' — ' + pct + '%' : ''));
+            if(idx !== refIdx && stats && stats[idx]){
+              const bar = document.createElement('span');
+              bar.style.display='inline-block'; bar.style.width='60px'; bar.style.height='8px'; bar.style.marginLeft='8px';
+              const p = Math.max(0, Math.min(100, stats[idx].percent));
+              bar.style.background = 'linear-gradient(90deg, #6cc070 '+p+'%, #eee '+p+'%)';
+              header.appendChild(bar);
+            }
+            const seqDiv = document.createElement('div'); seqDiv.className = 'msa-seq';
+            for(let i=start; i<Math.min(start+Math.floor(blockSize/3), aaLen); i++){
+              const a = s.aa[i] || 'X';
+              const span = document.createElement('span');
+              const aaChar = a || 'X';
+              const refAA = (aaSeqs[refIdx] && aaSeqs[refIdx].aa[i]) ? aaSeqs[refIdx].aa[i] : null;
+              const isMismatchAA = refAA !== null && aaChar !== refAA;
+              span.className = 'aa' + (isMismatchAA ? ' mismatch' : '') + ' ' + aaChar;
+              span.textContent = aaChar;
+              span.dataset.col = i;
+              span.addEventListener('click', (ev) => {
+                const col = ev.target.dataset.col;
+                document.querySelectorAll('[data-col="'+col+'"] ').forEach(el => el.classList.toggle('col-highlight'));
+              });
+              seqDiv.appendChild(span);
+            }
+            row.appendChild(header);
+            row.appendChild(seqDiv);
+            block.appendChild(row);
+          }
+          out.appendChild(block);
+          const br = document.createElement('div'); br.style.height='6px'; out.appendChild(br);
+        }
+      } else {
+        for(let start=0; start<len; start += blockSize){
+          const block = document.createElement('div'); block.className = 'msa-block';
+          for(const s of seqs){
+            const row = document.createElement('div'); row.className = 'msa-row';
+            const header = document.createElement('div'); header.className = 'msa-header';
+            // show percent identity if available
+            const idx = seqs.indexOf(s);
+            const pct = stats && stats[idx] && stats[idx].percent != null ? stats[idx].percent.toFixed(1) : '';
+            header.textContent = s.name + (idx===refIdx ? ' (REF)' : (pct !== '' ? ' — ' + pct + '%' : ''));
+            if(idx !== refIdx && stats && stats[idx]){
+              const bar = document.createElement('span');
+              bar.style.display='inline-block'; bar.style.width='60px'; bar.style.height='8px'; bar.style.marginLeft='8px';
+              const p = Math.max(0, Math.min(100, stats[idx].percent));
+              bar.style.background = 'linear-gradient(90deg, #6cc070 '+p+'%, #eee '+p+'%)';
+              header.appendChild(bar);
+            }
+            const seqDiv = document.createElement('div'); seqDiv.className = 'msa-seq';
+            for(let i=start; i<Math.min(start+blockSize, s.seq.length); i++){
+              const ch = s.seq[i] || '-';
+              const span = document.createElement('span');
+              const base = (/[ATGCatgc]/.test(ch) ? ch.toUpperCase() : (ch==='-'?'-':'N'));
+              // compare to reference base at this position
+              const refBase = (seqs[refIdx] && seqs[refIdx].seq[i]) ? seqs[refIdx].seq[i].toUpperCase() : null;
+              const isMismatch = refBase !== null && base !== refBase;
+              span.className = 'nt' + (isMismatch ? ' mismatch' : '') + ' ' + base;
+              span.textContent = ch;
+              span.dataset.col = i;
+              span.addEventListener('click', (ev) => {
+                const col = ev.target.dataset.col;
+                document.querySelectorAll('[data-col="'+col+'"] ').forEach(el => el.classList.toggle('col-highlight'));
+              });
+              seqDiv.appendChild(span);
+            }
+            row.appendChild(header);
+            row.appendChild(seqDiv);
+            block.appendChild(row);
+          }
+          out.appendChild(block);
+          const br = document.createElement('div'); br.style.height='6px'; out.appendChild(br);
+        }
+      }
+      return out;
+    }
+
+    function renderSingle(seqs, selIdx, blockSize, stats, refIdx, mode){
+      // render only reference (refIdx) and the selected read (selIdx) stacked
+      const out = document.createElement('div'); out.id = 'singleView';
+      const container = document.createElement('div');
+      if(mode === 'aa'){
+        const aaSeqs = translateAll(seqs);
+        const aaLen = aaSeqs[0].aa.length;
+        for(let start=0; start<aaLen; start += Math.floor(blockSize/3)){
+          const block = document.createElement('div'); block.className='msa-block';
+          // reference row
+          const ref = aaSeqs[refIdx];
+          const refRow = document.createElement('div'); refRow.className='msa-row';
+          const refHeader = document.createElement('div'); refHeader.className='msa-header'; refHeader.textContent = ref.name + ' (REF)';
+          const refSeqDiv = document.createElement('div'); refSeqDiv.className='msa-seq';
+          for(let i=start;i<Math.min(start+Math.floor(blockSize/3), aaLen); i++){
+            const a = ref.aa[i]||'X'; const span = document.createElement('span'); span.className='aa '+a; span.textContent=a; span.dataset.col=i; refSeqDiv.appendChild(span);
+          }
+          refRow.appendChild(refHeader); refRow.appendChild(refSeqDiv); block.appendChild(refRow);
+          // selected read row
+          const sel = aaSeqs[selIdx];
+          const selRow = document.createElement('div'); selRow.className='msa-row';
+          const selHeader = document.createElement('div'); selHeader.className='msa-header';
+          const pct = stats && stats[selIdx] ? (stats[selIdx].percent||0).toFixed(1) : '';
+          selHeader.textContent = sel.name + (pct !== '' ? ' — ' + pct + '%' : '');
+          const selSeqDiv = document.createElement('div'); selSeqDiv.className='msa-seq';
+          for(let i=start;i<Math.min(start+Math.floor(blockSize/3), aaLen); i++){
+            const a = sel.aa[i]||'X';
+            const refAA = (aaSeqs[refIdx] && aaSeqs[refIdx].aa[i]) ? aaSeqs[refIdx].aa[i] : null;
+            const isMismatchAA = refAA !== null && a !== refAA;
+            const span = document.createElement('span');
+            span.className = 'aa' + (isMismatchAA ? ' mismatch' : '') + ' ' + a;
+            span.textContent = a; span.dataset.col = i;
+            span.addEventListener('click', ()=>{ document.querySelectorAll('[data-col="'+i+'"]').forEach(el=>el.classList.toggle('col-highlight')); }); selSeqDiv.appendChild(span);
+          }
+          selRow.appendChild(selHeader); selRow.appendChild(selSeqDiv); block.appendChild(selRow);
+          out.appendChild(block);
+          const br = document.createElement('div'); br.style.height='6px'; out.appendChild(br);
+        }
+      } else {
+        const len = seqs[0].seq.length;
+        for(let start=0; start<len; start += blockSize){
+          const block = document.createElement('div'); block.className='msa-block';
+          // ref
+          const ref = seqs[refIdx];
+          const refRow = document.createElement('div'); refRow.className='msa-row';
+          const refHeader = document.createElement('div'); refHeader.className='msa-header'; refHeader.textContent = ref.name + ' (REF)';
+          const refSeqDiv = document.createElement('div'); refSeqDiv.className='msa-seq';
+          for(let i=start;i<Math.min(start+blockSize, len); i++){ const ch = ref.seq[i]||'-'; const span = document.createElement('span'); span.className='nt '+(/[ATGCatgc]/.test(ch)?ch.toUpperCase():(ch==='-'?'-':'N')); span.textContent=ch; span.dataset.col=i; refSeqDiv.appendChild(span); }
+          refRow.appendChild(refHeader); refRow.appendChild(refSeqDiv); block.appendChild(refRow);
+          // selected
+          const sel = seqs[selIdx];
+          const selRow = document.createElement('div'); selRow.className='msa-row';
+          const selHeader = document.createElement('div'); selHeader.className='msa-header'; const pct = stats && stats[selIdx] ? (stats[selIdx].percent||0).toFixed(1) : ''; selHeader.textContent = sel.name + (pct !== '' ? ' — ' + pct + '%' : '');
+          const selSeqDiv = document.createElement('div'); selSeqDiv.className='msa-seq';
+          for(let i=start;i<Math.min(start+blockSize, len); i++){ const ch = sel.seq[i]||'-'; const base = (/[ATGCatgc]/.test(ch)?ch.toUpperCase():(ch==='-'?'-':'N')); const refBase = (seqs[refIdx] && seqs[refIdx].seq[i]) ? seqs[refIdx].seq[i].toUpperCase() : null; const isMismatch = refBase !== null && base !== refBase; const span = document.createElement('span'); span.className = 'nt' + (isMismatch ? ' mismatch' : '') + ' ' + base; span.textContent=ch; span.dataset.col=i; span.addEventListener('click', ()=>{ document.querySelectorAll('[data-col="'+i+'"]').forEach(el=>el.classList.toggle('col-highlight')); }); selSeqDiv.appendChild(span); }
+          selRow.appendChild(selHeader); selRow.appendChild(selSeqDiv); block.appendChild(selRow);
+          out.appendChild(block);
+          const br = document.createElement('div'); br.style.height='6px'; out.appendChild(br);
+        }
+      }
+      return out;
+    }
+
+    async function fetchAndRender(url){
+      try{
+        const resp = await fetch(url);
+        if(!resp.ok) throw new Error('HTTP ' + resp.status);
+        const txt = await resp.text();
+        document.getElementById('downloadLink').href = url;
+        const seqs = parseFasta(txt);
+        if(seqs.length === 0){ document.getElementById('alignmentRender').textContent = 'No sequences found in FASTA.'; return; }
+        // ensure all sequences same length by padding with -
+        const maxLen = Math.max(...seqs.map(s=>s.seq.length));
+        seqs.forEach(s => { if(s.seq.length < maxLen) s.seq = s.seq.padEnd(maxLen, '-'); });
+        const blockSizeSel = document.getElementById('blockSize');
+        const refSelect = document.getElementById('refSelect');
+        // populate ref select
+        refSelect.innerHTML = '';
+        seqs.forEach((s,i)=>{ const opt = document.createElement('option'); opt.value = i; opt.text = s.name; refSelect.appendChild(opt); });
+        // choose reference: look for 'ref' or 'reference' in name, otherwise first
+        let defaultRef = seqs.findIndex(s=>/ref(erence)?|consensus|ref_/i.test(s.name)); if(defaultRef < 0) defaultRef = 0;
+        refSelect.value = defaultRef;
+
+        const readSelect = document.getElementById('readSelect');
+        // populate readSelect
+        readSelect.innerHTML = '';
+        seqs.forEach((s,i)=>{ const opt = document.createElement('option'); opt.value = i; opt.text = s.name; readSelect.appendChild(opt); });
+        // default selected read: first non-ref
+        let defaultRead = seqs.findIndex((_,i)=> i !== defaultRef ); if(defaultRead < 0) defaultRead = 0;
+        readSelect.value = defaultRead;
+
+        const render = () => {
+          const bs = parseInt(blockSizeSel.value,10)||60;
+          const refIdx = parseInt(refSelect.value,10)||0;
+          const selIdx = parseInt(readSelect.value,10)||0;
+          const aaMode = document.getElementById('aaMode').checked;
+          const singleMode = document.getElementById('singleMode').checked;
+          const mode = aaMode ? 'aa' : 'nt';
+          const stats = computeIdentityStats(seqs, refIdx, mode);
+          const container = document.getElementById('alignmentRender'); container.innerHTML = '';
+          if(singleMode){
+            container.appendChild(renderSingle(seqs, selIdx, bs, stats, refIdx, mode));
+          } else {
+            container.appendChild(renderAlignment(seqs, bs, stats, refIdx, mode));
+          }
+        };
+
+        document.getElementById('toggleColor').addEventListener('click', ()=>{
+          document.querySelectorAll('.nt').forEach(el=> el.classList.toggle('no-color'));
+          document.querySelectorAll('.aa').forEach(el=> el.classList.toggle('no-color'));
+        });
+        blockSizeSel.addEventListener('change', render);
+        refSelect.addEventListener('change', render);
+        document.getElementById('aaMode').addEventListener('change', render);
+        document.getElementById('singleMode').addEventListener('change', render);
+        readSelect.addEventListener('change', render);
+        document.getElementById('prevRead').addEventListener('click', ()=>{ const rs = document.getElementById('readSelect'); rs.selectedIndex = Math.max(0, rs.selectedIndex-1); rs.dispatchEvent(new Event('change')); });
+        document.getElementById('nextRead').addEventListener('click', ()=>{ const rs = document.getElementById('readSelect'); rs.selectedIndex = Math.min(rs.options.length-1, rs.selectedIndex+1); rs.dispatchEvent(new Event('change')); });
+        render();
+      }catch(e){ document.getElementById('alignmentRender').textContent = 'Failed to load alignment: '+e; }
+    }
+
+    const alnPath = '__ALIGNMENT_PATH__';
+    fetchAndRender(alnPath);
+  </script>
+</body>
+</html>

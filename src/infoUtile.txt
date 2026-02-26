@@ -1,0 +1,33 @@
+Proiectul este un pipeline bioinformatic (PeGAS / VeGAS) bazat pe Snakemake care:
+
+Preia fișiere Illumina paired-end (*_R1.fastq.gz, *_R2.fastq.gz) dintr-un folder de input.
+Rulează QC (FastQC, fastp), eliminare a citirilor gazdă (bowtie2), asamblare ghidată de referință (bowtie2 + bcftools/samtools) și generează rapoarte HTML (QC și assembly) cu Plotly/Jinja2.
+Folosește fișiere conda env (src/envs/*.yml) pentru fiecare regulă Snakemake.
+Are scripturi helper în scripts (host_removal.py, assembly.py, QC_report.py, assembly_report.py, utils.py).
+Instalarea e gândită prin setup.py + un install.sh.
+Structura principală (ce am verificat)
+Root:
+
+README.md, install.sh, run.sh, setup.py, MANIFEST.in, environment.yaml, debug.log
+data, fastqc_raw, host_indexes, raw_data, ref_indexes, report
+src — cod sursă:
+__init__.py (gol)
+main.py (entrypoint CLI)
+Snakefile (workflow)
+envs (yml pentru conda)
+scripts:
+host_removal.py
+assembly.py
+QC_report.py
+assembly_report.py
+utils.py
+
+Run command:
+sh run.sh
+
+comanda utila :
+file data/output/cleaned/628-hMPV-2024_S50_L001_001_R1.fastq.gz || true; zcat -f data/output/cleaned/628-hMPV-2024_S50_L001_001_R1.fastq.gz | head -n 8 || true
+rm -f data/output/cleaned/* || true; ls -l data/output/cleaned || true
+
+sh run.sh
+

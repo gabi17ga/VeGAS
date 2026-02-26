@@ -688,10 +688,14 @@ def main():
         else:
             raise FileNotFoundError(f"File {f} not found.")
     
-    # Get the max length count from all samples
-    max_R1 = max([max([lc[1] for lc in data_R1[sample]["raw"]]) for sample in samples])
-    max_R2 = max([max([lc[1] for lc in data_R2[sample]["raw"]]) for sample in samples])
-    maximum = max(max_R1, max_R2)
+    # Get the max length count from all samples (safely)
+    max_vals = []
+    for sample in samples:
+        if "raw" in data_R1.get(sample, {}) and data_R1[sample]["raw"]:
+            max_vals.append(max([lc[1] for lc in data_R1[sample]["raw"]]))
+        if "raw" in data_R2.get(sample, {}) and data_R2[sample]["raw"]:
+            max_vals.append(max([lc[1] for lc in data_R2[sample]["raw"]]))
+    maximum = max(max_vals) if max_vals else 1
     
     rows = []
     for sample in samples:
