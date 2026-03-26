@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nucleotide Difference Report</title>
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+  <style>
+    .container { max-width: 94% !important; }
+    .section { margin-top: 20px; margin-bottom: 28px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1 class="mt-4">Nucleotide-level Differences (Classic vs Snippy-style)</h1>
+    <p>Classic = assembly consensus, Snippy-style = snippy consensus, both compared to selected reference.</p>
+
+    {% for b in sample_blocks %}
+    <div class="section">
+      <h4>{{ b.sample }}</h4>
+      <p>
+        Compared: {{ b.summary.positions_compared }} nt |
+        classic vs Snippy diffs (aceleași ca DIFF din Excel): {{ b.summary.classic_vs_snippy }} |
+        classic vs ref diffs: {{ b.summary.classic_vs_ref }} |
+        Snippy vs ref diffs: {{ b.summary.snippy_vs_ref }} |
+        any difference (oricare comparație): {{ b.summary.any_difference }} |
+        <a href="{{ b.tsv_classic_ai_rel }}">TSV clasic-vs-Snippy</a> |
+        <a href="{{ b.tsv_any_rel }}">TSV toate diferențele</a>
+      </p>
+
+      {{ b.base_plot_div|safe }}
+      {{ b.plot_div|safe }}
+    </div>
+    {% endfor %}
+  </div>
+</body>
+</html>
